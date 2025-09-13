@@ -1,0 +1,17 @@
+{
+  "name": "remotecontrolbanpaku",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "net": "^1.0.2",
+    "onnxruntime-web": "^1.22.0",
+    "proj4": "^2.17.0",
+    "ws": "^8.18.0"
+  }
+}

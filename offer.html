@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js"></script>
+    <script type="module" src="./offer.js" defer></script>
+    <meta charset="utf-8" />
+    <title>WebRTC Peer Connection Sample</title>
+    <style>
+      video {
+        width: 300px;
+        height: 200px;
+        background-color: black;
+        margin: 0 10px;
+      }
+      canvas {
+        border: 2px solid #333;
+        max-width: 100%;
+        height: auto;
+      }
+      
+      /* Detection Canvas全画面表示用スタイル */
+      #large-detection-canvas {
+        max-width: 90vw;
+        max-height: 90vh;
+        object-fit: contain;
+      }
+      
+      #large-detection-canvas.fullscreen {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: 100vw !important;
+        max-height: 100vh !important;
+        z-index: 9999 !important;
+        background-color: black !important;
+        object-fit: contain !important;
+        cursor: pointer !important;
+        display: block !important;
+        border: none !important;
+      }
+      
+      /* 全体レイアウト改善 */
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background-color: #f5f5f5;
+      }
+      
+      .main-container {
+        display: grid;
+        grid-template-columns: 1fr 300px;
+        gap: 20px;
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      
+      .left-panel {
+        background-color: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      
+      .right-panel {
+        background-color: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      
+      .control-section {
+        margin-bottom: 20px;
+        padding: 15px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        background-color: #fafafa;
+      }
+      
+      .control-section h2 {
+        margin-top: 0;
+        color: #333;
+        border-bottom: 2px solid #007bff;
+        padding-bottom: 5px;
+      }
+      
+      button {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin: 5px;
+      }
+      
+      button:hover {
+        background-color: #0056b3;
+      }
+      
+      button:disabled {
+        background-color: #6c757d;
+        cursor: not-allowed;
+      }
+      
+      input, select {
+        margin: 5px;
+        padding: 5px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+      }
+      
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 10px 0;
+      }
+      
+      th {
+        background-color: #f8f9fa;
+        padding: 8px;
+        text-align: left;
+        border: 1px solid #ddd;
+      }
+      .status-enabled {
+        color: #008000;
+        font-weight: bold;
+        padding: 5px;
+        background-color: #e8f5e8;
+        border-radius: 3px;
+      }
+      .status-disabled {
+        color: #800000;
+        font-weight: bold; 
+        padding: 5px;
+        background-color: #f5e8e8;
+        border-radius: 3px;
+      }
+      .safety-disabled {
+        color: #666;
+        font-weight: bold;
+        padding: 5px;
+        background-color: #f0f0f0;
+        border-radius: 3px;
+      }
+      .safety-active {
+        color: #0066cc;
+        font-weight: bold;
+        padding: 5px;
+        background-color: #e6f3ff;
+        border-radius: 3px;
+      }
+      .safety-triggered {
+        color: #ff0000;
+        font-weight: bold;
+        padding: 5px;
+        background-color: #ffe6e6;
+        border-radius: 3px;
+        animation: blink 1s infinite;
+      }
+      .safety-resetting {
+        color: #ff8800;
+        font-weight: bold;
+        padding: 5px;
+        background-color: #fff3e0;
+        border-radius: 3px;
+        animation: pulse 2s infinite;
+      }
+      @keyframes blink {
+        0%, 50% { opacity: 1; }
+        51%, 100% { opacity: 0.5; }
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WebRTC Peer Connection Sample (Offer)</h1>
+    
+    <div class="main-container">
+      <div class="left-panel">
+        <div class="control-section">
+          <h2>Video Stream</h2>
+          <video id="remote-video" autoplay playsinline></video>
+          <br />
+          <button id="send-sdp-by-ws">Send SDP</button>
+          SelectVideoCodec:<select id="video-codec-select">
+            <option value="AV1">AV1</option>
+            <option value="VP9">VP9</option>
+            <option value="H264">H264</option>
+            <option value="VP8">VP8</option>
+          </select>
+        </div>
+        <div class="control-section">
+          <h2>Controller Info</h2>
+          <table>
+            <tr>
+              <th>SetRemoteCont:<span id="set-remote-cont"></span></th>
+            </tr>
+            <tr>
+              <th>SetSteer:<span id="set-steer"></span>deg(-100~100)</th>
+            </tr>
+            <tr>
+              <th>SetGear:<span id="set-gear"></span></th>
+            </tr>
+            <tr>
+              <th>SetRpm:<span id="set-rpm"></span>rpm</th>
+            </tr>
+            <tr>
+              <th>SetShuttle:<span id="set-shuttle"></span></th>
+            </tr>
+            <tr>
+              <th>SetHorn:<span id="set-horn"></span></th>
+            </tr>
+            <tr>
+              <th>SetPto:<span id="set-pto"></span></th>
+            </tr>
+            <tr>
+              <th>SetLinkHeight:<span id="set-link-height"></span>%UP</th>
+            </tr>
+            <tr>
+              <th>SetSpeed:<span id="set-speed"></span>km/h</th>
+            </tr>
+          </table>
+        </div>
+        <div class="control-section">
+          <h2>Statistics & Logs</h2>
+          <button id="save-delay-log">詳細WebRTC統計を保存</button>
+          <button id="clear-stats">統計データクリア</button>
+        </div>
+        
+        <div class="control-section">
+          <h2>Video Quality Settings</h2>
+          VideoHeight:<input
+            type="number"
+            id="set-video-height"
+            max="4320"
+            value="1080"
+          /><br />
+          VideoWidth:<input
+            type="number"
+            id="set-video-width"
+            max="7680"
+            value="1920"
+          /><br />
+          FrameRate:<input
+            type="number"
+            id="set-video-framerate"
+            min="1"
+            max="60"
+            value="30"
+          />Hz<br />
+          bitrate:<input
+            type="number"
+            id="set-video-bitrate"
+            min="1"
+            max="1000000"
+            value="1000000"
+          />bps<br />
+          <button id="set-video-quality">SetVideoQuality</button>
+          <canvas id="video-canvas" hidden></canvas>
+          <canvas id="video-canvas-sonoki" hidden></canvas>
+          <button id="fullcanvas-trigger">Canvas Full Screen</button>
+        </div>
+      </div>
+      
+      <div class="right-panel">
+        <div class="control-section">
+          <h2>ONNX Inference Control</h2>
+          <input type="radio" id="inference-on" name="inference-control" value="on">
+          <label for="inference-on">推論オン</label>
+          <input type="radio" id="inference-off" name="inference-control" value="off" checked>
+          <label for="inference-off">推論オフ</label><br>
+          <div id="inference-status" class="status-disabled">状態: 推論無効</div>
+        </div>
+        
+        <div class="control-section">
+          <h2>安全システム</h2>
+          <input type="checkbox" id="safety-enable" onchange="toggleSafety()">
+          <label for="safety-enable">安全システム有効</label><br>
+          <div id="safety-status" class="safety-disabled">安全システム: 無効</div>
+          <button id="safety-reset" onclick="resetSafety()" disabled>緊急リセット</button>
+          <button id="export-safety-logs" onclick="exportSafetyLogs()">安全ログ出力</button>
+        </div>
+        
+        <div class="control-section">
+          <h2>Detection Canvas (1920x1080)</h2>
+          <input type="checkbox" id="canvas-toggle" onchange="toggleCanvas()">
+          <label for="canvas-toggle">Detection Canvas表示</label>
+          <button id="canvas-fullscreen-btn" onclick="toggleCanvasFullscreen()" style="display: none;">全画面表示</button><br><br>
+        </div>
+      </div>
+    </div>
+    
+    <canvas id="large-detection-canvas" width="1920" height="1080" style="display: none;"></canvas>
+  </body>
+</html>
