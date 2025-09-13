@@ -20,6 +20,8 @@ import { ONNXInferenceEngine } from './onnxInference.js';
 const gamepadToAutorunInfoCon = gamepadToAutorunInfo();
 const farminGamepadToAutorunInfoCon = farminGamepadToAutorunInfo();
 const signalingWebSocket = new WebSocket("ws://localhost:8080");
+// ↓ Answer側PCのIPアドレスに変更
+// const signalingWebSocket = new WebSocket("ws://192.168.1.100:8080");
 // const virtualWebSocket = new WebSocket("ws://localhost:9090/"); // エラーの原因①：WebSocketサーバーへの接続
 let peerConnection;
 let movieChannel;
