@@ -301,6 +301,10 @@ if ("mediaDevices" in navigator) {
 }
 
 let deviceId = "default";
+// Answer側用の状態変数を追加
+let isInferenceEnabled = false; // Answer側では推論機能なし
+let isCanvasVisible = false; // Answer側ではキャンバス機能なし
+
 cameraSelect.onchange = (_) => {
   deviceId = cameraSelect.selectedOptions[0].id;
 };
@@ -402,18 +406,26 @@ function createUnifiedLogEntry() {
 
 // Answer側用統計保存機能
 function saveAnswerWebRTCStats() {
+  console.log("=== Answer側統計保存機能デバッグ ===");
+  console.log("ボタンクリック検知: OK");
+  console.log("webrtcStatsLogs配列長:", webrtcStatsLogs.length);
+  console.log("peerConnection状態:", peerConnection ? peerConnection.connectionState : "未接続");
+  console.log("stream状態:", stream ? "取得済み" : "未取得");
+
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const pad = n => n.toString().padStart(2, "0");
   const ts = `${jst.getUTCFullYear()}-${pad(jst.getUTCMonth() + 1)}-${pad(jst.getUTCDate())}_${pad(jst.getUTCHours())}-${pad(jst.getUTCMinutes())}-${pad(jst.getUTCSeconds())}`;
 
   if (webrtcStatsLogs.length > 0) {
+    console.log("統計データ有り - CSV作成開始");
     const headers = Object.keys(webrtcStatsLogs[0]);
     const csv = [
       headers.join(","),
       ...webrtcStatsLogs.map(row => headers.map(h => row[h] ?? "").join(","))
     ].join("\n");
-    
+
+    console.log("CSV作成完了 - ダウンロード開始");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -421,15 +433,22 @@ function saveAnswerWebRTCStats() {
     a.download = `answer_webrtc_unified_stats_${ts}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    console.log(`統一WebRTC統計を保存: ${webrtcStatsLogs.length}エントリ (${ts})`);
+
+    console.log(`✅ Answer側統一WebRTC統計を保存: ${webrtcStatsLogs.length}エントリ (${ts})`);
+    alert(`Answer側統計データを保存しました (${webrtcStatsLogs.length}エントリ)`);
   } else {
-    console.log("保存する統計データがありません");
+    console.warn("❌ 保存する統計データがありません");
+    console.log("WebRTC接続とカメラストリームを確立してからお試しください");
+    console.log("手順: 1) Get Capture でカメラ取得 2) Offer側から Send SDP");
+    alert("保存する統計データがありません。\n1) Get Captureでカメラを取得\n2) Offer側からSend SDPでWebRTC接続\nを行ってからお試しください。");
   }
 }
 
 function clearAnswerWebRTCStats() {
+  const previousLength = webrtcStatsLogs.length;
   webrtcStatsLogs.length = 0;
-  console.log("WebRTC統計データをクリアしました");
+  console.log(`✅ Answer側WebRTC統計データをクリアしました (${previousLength}エントリ削除)`);
+  alert(`統計データをクリアしました (${previousLength}エントリ削除)`);
 }
 
 setInterval(async function debugRTCStats() {
