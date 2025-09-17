@@ -326,91 +326,56 @@ streamCaptureBtn.addEventListener("click", async () => {
 // ===== ここから詳細WebRTC統計ログ機能 (Answer側) =====
 const webrtcStatsLogs = [];
 
-// 統一されたログスキーマを作成する関数（Answer側版）
-function createUnifiedLogEntry() {
+// Answer側専用最適化ログスキーマ（送信・エンコード中心）
+function createOptimizedAnswerLogEntry() {
   const now = new Date();
-  const isoTimestamp = now.toISOString();
-  
-  return {
-    // 基本情報（共通）
-    timestamp: isoTimestamp,
-    time_formatted: now.toLocaleTimeString('ja-JP'),
+  const logEntry = {
+    // === 基本情報 ===
+    timestamp: now.toISOString(),
     side: 'answer',
-    session_id: peerConnection ? peerConnection._sessionId || 'unknown' : 'no_connection',
-    
-    // 接続状態（共通）
+
+    // === 接続状態 ===
     connection_state: peerConnection ? peerConnection.connectionState : 'unknown',
     ice_connection_state: peerConnection ? peerConnection.iceConnectionState : 'unknown',
-    ice_gathering_state: peerConnection ? peerConnection.iceGatheringState : 'unknown',
-    
-    // アプリケーション状態（共通）
-    inference_enabled: isInferenceEnabled,
-    canvas_visible: isCanvasVisible,
-    
-    // Video品質（Answer側：送信統計）
+
+    // === 映像品質（送信・エンコード統計）===
     frame_width: 0,
     frame_height: 0,
     frames_per_second: 0,
-    frames_received: 0, // Offer側で使用
-    frames_decoded: 0, // Offer側で使用
-    frames_dropped: 0, // Offer側で使用
     frames_sent: 0,
     frames_encoded: 0,
-    key_frames_decoded: 0, // Offer側で使用
     key_frames_encoded: 0,
-    
-    // 品質メトリクス
-    actual_fps_received: 0, // Offer側で使用
-    actual_fps_decoded: 0, // Offer側で使用
+
+    // === 実際のパフォーマンス ===
     actual_fps_sent: 0,
     actual_fps_encoded: 0,
-    avg_decode_time_ms: 0, // Offer側で使用
-    avg_encode_time_ms: 0,
-    total_decode_time_ms: 0, // Offer側で使用
-    total_encode_time_ms: 0,
-    
-    // ジッターバッファ（主にOffer側）
-    jitter_buffer_delay_ms: 0,
-    jitter_buffer_emitted_count: 0,
-    avg_jitter_buffer_delay_ms: 0,
-    
-    // ネットワーク統計（共通）
-    jitter_ms: 0,
+    total_encode_time_ms: 0, // avg_encode_time_msは計算で求める
+
+    // === ネットワーク統計（送信系）===
     rtt_ms: 0,
-    packets_received: 0, // Offer側で使用
     packets_sent: 0,
-    packets_lost: 0,
-    bytes_received: 0, // Offer側で使用
     bytes_sent: 0,
-    header_bytes_received: 0, // Offer側で使用
-    packets_per_second: 0,
-    bitrate_kbps: 0,
     target_bitrate: 0,
-    available_outgoing_bitrate: 0,
-    
-    // エラー統計（共通）
-    fir_count: 0,
-    pli_count: 0,
-    nack_count: 0,
-    retransmitted_packets_sent: 0,
-    retransmitted_bytes_sent: 0,
-    
-    
-    // 検出結果統計（共通）
-    detections_count: 0,
-    detections_person_count: 0,
-    max_confidence: 0,
-    avg_confidence: 0
+    available_outgoing_bitrate: 0
   };
+
+  // === 条件分岐: エラー統計（エラー発生時のみ）===
+  // 実際のエラー検出ロジックは統計収集部分で設定
+
+  // === Answer側では推論機能なし ===
+  logEntry.inference_enabled = false;
+
+  return logEntry;
 }
 
 // Answer側用統計保存機能
 function saveAnswerWebRTCStats() {
-  console.log("=== Answer側統計保存機能デバッグ ===");
+  console.log("=== 最適化Answer側統計保存機能デバッグ ===");
   console.log("ボタンクリック検知: OK");
   console.log("webrtcStatsLogs配列長:", webrtcStatsLogs.length);
   console.log("peerConnection状態:", peerConnection ? peerConnection.connectionState : "未接続");
   console.log("stream状態:", stream ? "取得済み" : "未取得");
+  console.log("最適化スキーマ: Answer側専用（送信・エンコード中心）");
 
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -451,96 +416,71 @@ function clearAnswerWebRTCStats() {
   alert(`統計データをクリアしました (${previousLength}エントリ削除)`);
 }
 
-setInterval(async function debugRTCStats() {
+setInterval(async function collectOptimizedAnswerWebRTCStats() {
   if (!peerConnection) return;
   const stats = await peerConnection.getStats();
 
-  let logRow = {
-    timestamp: new Date().toLocaleTimeString('ja-JP'),
-    roundTripTime: null,
-    targetBitrate: null, // targetBitrate を追加
-    totalPacketSendDelay: null,
-    '[totalPacketSendDelay/packetsSent_in_ms]': null,
-    totalEncodeTime: null,
-    '[totalEncodeTime/framesEncoded_in_ms]': null,
-    packetsSent: null,
-    bytesSent: null,
-    framesEncoded: null,
-    '[framesEncoded/s]': null,
-    frameWidth: null,
-    frameHeight: null,
-    framesPerSecond: null,
-  };
+  // 最適化されたAnswer側スキーマでログエントリを作成
+  let logEntry = createOptimizedAnswerLogEntry();
 
-  let prevFramesEncoded = null;
-  let prevTimestamp = null;
+  let outboundRtpReport, candidatePairReport, mediaSourceReport;
 
   stats.forEach((report) => {
     if (report.type === "candidate-pair" && report.state === "succeeded") {
-      logRow.roundTripTime = report.currentRoundTripTime ?? report.roundTripTime ?? null;
-    }
-
-    if (report.type === "outbound-rtp" && report.kind === "video") {
-      logRow.targetBitrate = report.targetBitrate ?? null; // targetBitrate を取得
-      logRow.packetsSent = report.packetsSent ?? null;
-      logRow.bytesSent = report.bytesSent ?? null;
-      logRow.totalEncodeTime = report.totalEncodeTime ?? null;
-      logRow.framesEncoded = report.framesEncoded ?? null;
-      logRow.totalPacketSendDelay = report.totalPacketSendDelay ?? null;
-
-      if (report.totalEncodeTime !== undefined && report.framesEncoded > 0) {
-        logRow['[totalEncodeTime/framesEncoded_in_ms]'] =
-          ((report.totalEncodeTime / report.framesEncoded) * 1000).toFixed(3);
-      }
-
-      if (report.totalPacketSendDelay !== undefined && report.packetsSent > 0) {
-        logRow['[totalPacketSendDelay/packetsSent_in_ms]'] =
-          ((report.totalPacketSendDelay / report.packetsSent) * 1000).toFixed(6);
-      }
-
-      // framesEncoded/s の計算
-      if (prevFramesEncoded !== null && prevTimestamp !== null && report.framesEncoded) {
-        const timeDiff = (report.timestamp - prevTimestamp) / 1000; // in seconds
-        const frameDiff = report.framesEncoded - prevFramesEncoded;
-        if (timeDiff > 0) {
-            logRow['[framesEncoded/s]'] = (frameDiff / timeDiff).toFixed(2);
-        }
-      }
-      prevFramesEncoded = report.framesEncoded;
-      prevTimestamp = report.timestamp;
-    }
-
-    if (report.type === "media-source" && report.kind === "video") {
-      logRow.frameWidth = report.width ?? logRow.frameWidth;
-      logRow.frameHeight = report.height ?? logRow.frameHeight;
-      logRow.framesPerSecond = report.framesPerSecond ?? logRow.framesPerSecond;
+      candidatePairReport = report;
+    } else if (report.type === "outbound-rtp" && report.kind === "video") {
+      outboundRtpReport = report;
+    } else if (report.type === "media-source" && report.kind === "video") {
+      mediaSourceReport = report;
     }
   });
 
-  // 統一スキーマでログエントリを作成
-  let logEntry = createUnifiedLogEntry();
-  
+  // === 送信・エンコード統計 ===
+  if (outboundRtpReport) {
+    logEntry.frames_sent = outboundRtpReport.framesSent || 0;
+    logEntry.frames_encoded = outboundRtpReport.framesEncoded || 0;
+    logEntry.key_frames_encoded = outboundRtpReport.keyFramesEncoded || 0;
+    logEntry.total_encode_time_ms = outboundRtpReport.totalEncodeTime ?
+      parseFloat((outboundRtpReport.totalEncodeTime * 1000).toFixed(3)) : 0;
 
-  // 既存のログデータを統一スキーマにマッピング
-  logEntry.target_bitrate = logRow.targetBitrate || 0;
-  logEntry.packets_sent = logRow.packetsSent || 0;
-  logEntry.bytes_sent = logRow.bytesSent || 0;
-  logEntry.total_encode_time_ms = logRow.totalEncodeTime ? 
-    parseFloat((logRow.totalEncodeTime * 1000).toFixed(3)) : 0;  
-  logEntry.frames_encoded = logRow.framesEncoded || 0;
-  logEntry.rtt_ms = logRow.roundTripTime ? 
-    parseFloat((logRow.roundTripTime * 1000).toFixed(3)) : 0;
-  logEntry.avg_encode_time_ms = logRow['[totalEncodeTime/framesEncoded_in_ms]'] ? 
-    parseFloat(logRow['[totalEncodeTime/framesEncoded_in_ms]']) : 0;
-  logEntry.actual_fps_encoded = logRow['[framesEncoded/s]'] ? 
-    parseFloat(logRow['[framesEncoded/s]']) : 0;
-  logEntry.frame_width = logRow.frameWidth || 0;
-  logEntry.frame_height = logRow.frameHeight || 0;
-  logEntry.frames_per_second = logRow.framesPerSecond || 0;
-  
+    // ネットワーク統計
+    logEntry.packets_sent = outboundRtpReport.packetsSent || 0;
+    logEntry.bytes_sent = outboundRtpReport.bytesSent || 0;
+    logEntry.target_bitrate = outboundRtpReport.targetBitrate || 0;
+
+    // === エラー統計（エラー発生時のみ追加）===
+    const retransmittedPackets = outboundRtpReport.retransmittedPacketsSent || 0;
+    const retransmittedBytes = outboundRtpReport.retransmittedBytesSent || 0;
+    const firCount = outboundRtpReport.firCount || 0;
+    const pliCount = outboundRtpReport.pliCount || 0;
+    const nackCount = outboundRtpReport.nackCount || 0;
+
+    if (retransmittedPackets > 0 || retransmittedBytes > 0 || firCount > 0 || pliCount > 0 || nackCount > 0) {
+      if (retransmittedPackets > 0) logEntry.retransmitted_packets_sent = retransmittedPackets;
+      if (retransmittedBytes > 0) logEntry.retransmitted_bytes_sent = retransmittedBytes;
+      if (firCount > 0) logEntry.fir_count = firCount;
+      if (pliCount > 0) logEntry.pli_count = pliCount;
+      if (nackCount > 0) logEntry.nack_count = nackCount;
+    }
+  }
+
+  // === RTT情報 ===
+  if (candidatePairReport) {
+    logEntry.rtt_ms = candidatePairReport.currentRoundTripTime ?
+      parseFloat((candidatePairReport.currentRoundTripTime * 1000).toFixed(3)) : 0;
+    logEntry.available_outgoing_bitrate = candidatePairReport.availableOutgoingBitrate || 0;
+  }
+
+  // === メディアソース情報 ===
+  if (mediaSourceReport) {
+    logEntry.frame_width = mediaSourceReport.width || 0;
+    logEntry.frame_height = mediaSourceReport.height || 0;
+    logEntry.frames_per_second = mediaSourceReport.framesPerSecond || 0;
+  }
+
   // 統一ログに保存
   webrtcStatsLogs.push(logEntry);
-  
+
   // メモリ使用量制限
   if (webrtcStatsLogs.length > 1000) {
     webrtcStatsLogs.splice(0, webrtcStatsLogs.length - 1000);
