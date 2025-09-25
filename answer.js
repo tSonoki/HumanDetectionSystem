@@ -1,5 +1,5 @@
-//const signalingSocket = new WebSocket("ws://localhost:8080");
-const signalingSocket = new WebSocket("ws://10.100.0.35:8080");
+const signalingSocket = new WebSocket("ws://localhost:8080");
+//const signalingSocket = new WebSocket("ws://10.100.0.35:8080");
 const autorunSocket = new WebSocket("ws://127.0.0.1:8081");
 let peerConnection;
 let remoteDataChannel = null;
@@ -415,56 +415,215 @@ streamCaptureBtn.addEventListener("click", async () => {
 // ===== ここから詳細WebRTC統計ログ機能 (Answer側) =====
 const webrtcStatsLogs = [];
 
-// Answer側専用最適化ログスキーマ（送信・エンコード中心）
-function createOptimizedAnswerLogEntry() {
-  const now = new Date();
-  const logEntry = {
-    // === 基本情報 ===
-    timestamp: now.toISOString(),
-    side: 'answer',
+// WebRTC統計キーの英語化マッピング関数
+function translateStatKey(key) {
+  const translations = {
+    // Connection state mappings
+    'connection_state': 'connection_state',
+    'ice_connection_state': 'ice_connection_state',
+    'ice_gathering_state': 'ice_gathering_state',
+    'signaling_state': 'signaling_state',
 
-    // === 接続状態 ===
-    connection_state: peerConnection ? peerConnection.connectionState : 'unknown',
-    ice_connection_state: peerConnection ? peerConnection.iceConnectionState : 'unknown',
+    // Inference related
+    'inference_enabled': 'inference_enabled',
+    'total_inferences': 'total_inferences',
+    'skipped_frames_inference': 'skipped_frames_inference',
+    'min_inference_interval_ms': 'min_inference_interval_ms',
+    'detections_count': 'detections_count',
+    'detections_person_count': 'detections_person_count',
+    'max_confidence': 'max_confidence',
+    'min_confidence': 'min_confidence',
+    'avg_confidence': 'avg_confidence',
+    'person_max_area': 'person_max_area',
+    'person_min_area': 'person_min_area',
+    'person_avg_area': 'person_avg_area',
 
-    // === 映像品質（送信・エンコード統計）===
-    frame_width: 0,
-    frame_height: 0,
-    frames_per_second: 0,
-    frames_sent: 0,
-    frames_encoded: 0,
-    key_frames_encoded: 0,
+    // Report info
+    'report_types_count': 'report_types_count',
+    'report_types': 'report_types',
+    'total_reports': 'total_reports',
 
-    // === 実際のパフォーマンス ===
-    actual_fps_sent: 0,
-    actual_fps_encoded: 0,
-    total_encode_time_ms: 0, // avg_encode_time_msは計算で求める
+    // Codec stats
+    'codec_payloadType': 'codec_payload_type',
+    'codec_mimeType': 'codec_mime_type',
+    'codec_clockRate': 'codec_clock_rate',
+    'codec_channels': 'codec_channels',
+    'codec_sdpFmtpLine': 'codec_sdp_fmtp_line',
 
-    // === ネットワーク統計（送信系）===
-    rtt_ms: 0,
-    packets_sent: 0,
-    bytes_sent: 0,
-    target_bitrate: 0,
-    available_outgoing_bitrate: 0
+    // Inbound RTP stats
+    'inbound-rtp_packetsReceived': 'inbound_packets_received',
+    'inbound-rtp_bytesReceived': 'inbound_bytes_received',
+    'inbound-rtp_packetsLost': 'inbound_packets_lost',
+    'inbound-rtp_jitter': 'inbound_jitter',
+    'inbound-rtp_framesDecoded': 'inbound_frames_decoded',
+    'inbound-rtp_keyFramesDecoded': 'inbound_key_frames_decoded',
+    'inbound-rtp_frameWidth': 'inbound_frame_width',
+    'inbound-rtp_frameHeight': 'inbound_frame_height',
+    'inbound-rtp_framesPerSecond': 'inbound_frames_per_second',
+    'inbound-rtp_qpSum': 'inbound_qp_sum',
+    'inbound-rtp_totalDecodeTime': 'inbound_total_decode_time',
+    'inbound-rtp_totalInterFrameDelay': 'inbound_total_inter_frame_delay',
+    'inbound-rtp_audioLevel': 'inbound_audio_level',
+    'inbound-rtp_totalAudioEnergy': 'inbound_total_audio_energy',
+    'inbound-rtp_concealedSamples': 'inbound_concealed_samples',
+
+    // Outbound RTP stats
+    'outbound-rtp_packetsSent': 'outbound_packets_sent',
+    'outbound-rtp_bytesSent': 'outbound_bytes_sent',
+    'outbound-rtp_targetBitrate': 'outbound_target_bitrate',
+    'outbound-rtp_framesEncoded': 'outbound_frames_encoded',
+    'outbound-rtp_keyFramesEncoded': 'outbound_key_frames_encoded',
+    'outbound-rtp_totalEncodeTime': 'outbound_total_encode_time',
+    'outbound-rtp_totalPacketSendDelay': 'outbound_total_packet_send_delay',
+    'outbound-rtp_qualityLimitationReason': 'outbound_quality_limitation_reason',
+    'outbound-rtp_qualityLimitationDurations': 'outbound_quality_limitation_durations',
+    'outbound-rtp_nackCount': 'outbound_nack_count',
+    'outbound-rtp_firCount': 'outbound_fir_count',
+    'outbound-rtp_pliCount': 'outbound_pli_count',
+    'outbound-rtp_encoderImplementation': 'outbound_encoder_implementation',
+
+    // Remote inbound RTP stats
+    'remote-inbound-rtp_packetsLost': 'remote_inbound_packets_lost',
+    'remote-inbound-rtp_jitter': 'remote_inbound_jitter',
+    'remote-inbound-rtp_roundTripTime': 'remote_inbound_round_trip_time',
+    'remote-inbound-rtp_totalRoundTripTime': 'remote_inbound_total_round_trip_time',
+    'remote-inbound-rtp_fractionLost': 'remote_inbound_fraction_lost',
+
+    // Remote outbound RTP stats
+    'remote-outbound-rtp_packetsSent': 'remote_outbound_packets_sent',
+    'remote-outbound-rtp_bytesSent': 'remote_outbound_bytes_sent',
+    'remote-outbound-rtp_remoteTimestamp': 'remote_outbound_remote_timestamp',
+
+    // Media source stats
+    'media-source_trackIdentifier': 'media_source_track_identifier',
+    'media-source_kind': 'media_source_kind',
+    'media-source_audioLevel': 'media_source_audio_level',
+    'media-source_totalAudioEnergy': 'media_source_total_audio_energy',
+    'media-source_width': 'media_source_width',
+    'media-source_height': 'media_source_height',
+    'media-source_frames': 'media_source_frames',
+    'media-source_framesPerSecond': 'media_source_frames_per_second',
+
+    // CSRC stats
+    'csrc_contributorSsrc': 'csrc_contributor_ssrc',
+    'csrc_inboundRtpStreamId': 'csrc_inbound_rtp_stream_id',
+
+    // Peer connection stats
+    'peer-connection_dataChannelsOpened': 'peer_connection_data_channels_opened',
+    'peer-connection_dataChannelsClosed': 'peer_connection_data_channels_closed',
+
+    // Data channel stats
+    'data-channel_label': 'data_channel_label',
+    'data-channel_protocol': 'data_channel_protocol',
+    'data-channel_dataChannelIdentifier': 'data_channel_identifier',
+    'data-channel_state': 'data_channel_state',
+    'data-channel_messagesSent': 'data_channel_messages_sent',
+    'data-channel_bytesSent': 'data_channel_bytes_sent',
+    'data-channel_messagesReceived': 'data_channel_messages_received',
+    'data-channel_bytesReceived': 'data_channel_bytes_received',
+
+    // Stream stats (deprecated)
+    'stream_streamIdentifier': 'stream_identifier',
+    'stream_trackIds': 'stream_track_ids',
+
+    // Track stats (deprecated)
+    'track_trackIdentifier': 'track_identifier',
+    'track_remoteSource': 'track_remote_source',
+    'track_ended': 'track_ended',
+
+    // Transceiver stats
+    'transceiver_senderId': 'transceiver_sender_id',
+    'transceiver_receiverId': 'transceiver_receiver_id',
+    'transceiver_mid': 'transceiver_media_id',
+
+    // Sender stats
+    'sender_mediaSourceId': 'sender_media_source_id',
+    'sender_trackId': 'sender_track_id',
+
+    // Receiver stats
+    'receiver_trackId': 'receiver_track_id',
+    'receiver_jitterBufferDelay': 'receiver_jitter_buffer_delay',
+    'receiver_jitterBufferEmittedCount': 'receiver_jitter_buffer_emitted_count',
+
+    // Transport stats
+    'transport_bytesSent': 'transport_bytes_sent',
+    'transport_bytesReceived': 'transport_bytes_received',
+    'transport_dtlsState': 'transport_dtls_state',
+    'transport_selectedCandidatePairId': 'transport_selected_candidate_pair_id',
+    'transport_localCertificateId': 'transport_local_certificate_id',
+    'transport_remoteCertificateId': 'transport_remote_certificate_id',
+    'transport_tlsVersion': 'transport_tls_version',
+    'transport_dtlsCipher': 'transport_dtls_cipher',
+    'transport_iceRole': 'transport_ice_role',
+    'transport_iceLocalUsernameFragment': 'transport_ice_local_username_fragment',
+    'transport_iceState': 'transport_ice_state',
+
+    // Candidate pair stats
+    'candidate-pair_localCandidateId': 'candidate_pair_local_candidate_id',
+    'candidate-pair_remoteCandidateId': 'candidate_pair_remote_candidate_id',
+    'candidate-pair_state': 'candidate_pair_state',
+    'candidate-pair_nominated': 'candidate_pair_nominated',
+    'candidate-pair_bytesSent': 'candidate_pair_bytes_sent',
+    'candidate-pair_bytesReceived': 'candidate_pair_bytes_received',
+    'candidate-pair_lastPacketSentTimestamp': 'candidate_pair_last_packet_sent_timestamp',
+    'candidate-pair_lastPacketReceivedTimestamp': 'candidate_pair_last_packet_received_timestamp',
+    'candidate-pair_totalRoundTripTime': 'candidate_pair_total_round_trip_time',
+    'candidate-pair_currentRoundTripTime': 'candidate_pair_current_round_trip_time',
+    'candidate-pair_availableOutgoingBitrate': 'candidate_pair_available_outgoing_bitrate',
+    'candidate-pair_requestsReceived': 'candidate_pair_requests_received',
+    'candidate-pair_requestsSent': 'candidate_pair_requests_sent',
+    'candidate-pair_responsesReceived': 'candidate_pair_responses_received',
+    'candidate-pair_responsesSent': 'candidate_pair_responses_sent',
+    'candidate-pair_consentRequestsSent': 'candidate_pair_consent_requests_sent',
+
+    // Local/Remote candidate stats
+    'local-candidate_transportId': 'local_candidate_transport_id',
+    'local-candidate_address': 'local_candidate_address',
+    'local-candidate_port': 'local_candidate_port',
+    'local-candidate_protocol': 'local_candidate_protocol',
+    'local-candidate_candidateType': 'local_candidate_type',
+    'local-candidate_priority': 'local_candidate_priority',
+    'local-candidate_url': 'local_candidate_url',
+    'remote-candidate_transportId': 'remote_candidate_transport_id',
+    'remote-candidate_address': 'remote_candidate_address',
+    'remote-candidate_port': 'remote_candidate_port',
+    'remote-candidate_protocol': 'remote_candidate_protocol',
+    'remote-candidate_candidateType': 'remote_candidate_type',
+    'remote-candidate_priority': 'remote_candidate_priority',
+    'remote-candidate_url': 'remote_candidate_url',
+
+    // Certificate stats
+    'certificate_fingerprint': 'certificate_fingerprint',
+    'certificate_fingerprintAlgorithm': 'certificate_fingerprint_algorithm',
+    'certificate_base64Certificate': 'certificate_base64_certificate',
   };
 
-  // === 条件分岐: エラー統計（エラー発生時のみ）===
-  // 実際のエラー検出ロジックは統計収集部分で設定
+  // フォールバック処理: マッピングされていないキーを小文字のスネークケースに変換
+  if (translations[key]) {
+    return translations[key];
+  }
 
-  // === Answer側では推論機能なし ===
-  logEntry.inference_enabled = false;
+  // キーが空の場合は'unknown_field'を返す
+  if (!key || key.trim() === '') {
+    return 'unknown_field';
+  }
 
-  return logEntry;
+  // キャメルケースをスネークケースに変換し、すべて小文字にする
+  return key
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .replace(/-/g, '_')
+    .toLowerCase();
 }
+
 
 // Answer側用統計保存機能
 function saveAnswerWebRTCStats() {
-  console.log("=== 最適化Answer側統計保存機能デバッグ ===");
+  console.log("=== Answer側WebRTC統計保存機能デバッグ ===");
   console.log("ボタンクリック検知: OK");
   console.log("webrtcStatsLogs配列長:", webrtcStatsLogs.length);
   console.log("peerConnection状態:", peerConnection ? peerConnection.connectionState : "未接続");
   console.log("stream状態:", stream ? "取得済み" : "未取得");
-  console.log("最適化スキーマ: Answer側専用（送信・エンコード中心）");
+  console.log("統計スキーマ: Answer側全WebRTCStats対応");
 
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -473,10 +632,34 @@ function saveAnswerWebRTCStats() {
 
   if (webrtcStatsLogs.length > 0) {
     console.log("統計データ有り - CSV作成開始");
+    console.log("統計項目数:", Object.keys(webrtcStatsLogs[0]).length);
+    console.log("利用可能なレポートタイプ:", webrtcStatsLogs[0].report_types);
+
     const headers = Object.keys(webrtcStatsLogs[0]);
+
+    // デバッグ情報: 空のヘッダーや問題のあるヘッダーをチェック
+    const emptyHeaders = headers.filter(h => !h || h.trim() === '');
+    const suspiciousHeaders = headers.filter(h => h.includes('undefined') || h.includes('null'));
+
+    if (emptyHeaders.length > 0) {
+      console.warn('Empty headers found:', emptyHeaders);
+    }
+    if (suspiciousHeaders.length > 0) {
+      console.warn('Suspicious headers found:', suspiciousHeaders);
+    }
+
+    console.log('Sample headers:', headers.slice(0, 10));
+    console.log('Total headers:', headers.length);
+
     const csv = [
       headers.join(","),
-      ...webrtcStatsLogs.map(row => headers.map(h => row[h] ?? "").join(","))
+      ...webrtcStatsLogs.map(row => headers.map(h => {
+        const value = row[h];
+        // 値がundefinedやnullの場合は空文字、オブジェクトの場合はJSON文字列に変換
+        if (value === undefined || value === null) return "";
+        if (typeof value === 'object') return JSON.stringify(value).replace(/"/g, '""');
+        return String(value).replace(/"/g, '""');
+      }).join(","))
     ].join("\n");
 
     console.log("CSV作成完了 - ダウンロード開始");
@@ -484,12 +667,12 @@ function saveAnswerWebRTCStats() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `answer_webrtc_unified_stats_${ts}.csv`;
+    a.download = `answer_webrtc_stats_${ts}.csv`;
     a.click();
     URL.revokeObjectURL(url);
 
-    console.log(`✅ Answer側統一WebRTC統計を保存: ${webrtcStatsLogs.length}エントリ (${ts})`);
-    alert(`Answer側統計データを保存しました (${webrtcStatsLogs.length}エントリ)`);
+    console.log(`✅ Answer側WebRTC統計を保存: ${webrtcStatsLogs.length}エントリ (${ts})`);
+    alert(`Answer側統計データを保存しました (${webrtcStatsLogs.length}エントリ、${headers.length}項目)`);
   } else {
     console.warn("❌ 保存する統計データがありません");
     console.log("WebRTC接続とカメラストリームを確立してからお試しください");
@@ -505,67 +688,54 @@ function clearAnswerWebRTCStats() {
   alert(`統計データをクリアしました (${previousLength}エントリ削除)`);
 }
 
-setInterval(async function collectOptimizedAnswerWebRTCStats() {
+setInterval(async function collectCompleteAnswerWebRTCStats() {
   if (!peerConnection) return;
   const stats = await peerConnection.getStats();
 
-  // 最適化されたAnswer側スキーマでログエントリを作成
-  let logEntry = createOptimizedAnswerLogEntry();
+  // 全statsを格納するオブジェクト
+  const allStats = {};
 
-  let outboundRtpReport, candidatePairReport, mediaSourceReport;
-
+  // 全てのstatsレポートを収集
   stats.forEach((report) => {
-    if (report.type === "candidate-pair" && report.state === "succeeded") {
-      candidatePairReport = report;
-    } else if (report.type === "outbound-rtp" && report.kind === "video") {
-      outboundRtpReport = report;
-    } else if (report.type === "media-source" && report.kind === "video") {
-      mediaSourceReport = report;
+    // reportのtypeとkindを組み合わせてキーを作成
+    const key = report.kind ? `${report.type}_${report.kind}` : report.type;
+
+    if (!allStats[key]) {
+      allStats[key] = [];
     }
+    allStats[key].push(report);
   });
 
-  // === 送信・エンコード統計 ===
-  if (outboundRtpReport) {
-    logEntry.frames_sent = outboundRtpReport.framesSent || 0;
-    logEntry.frames_encoded = outboundRtpReport.framesEncoded || 0;
-    logEntry.key_frames_encoded = outboundRtpReport.keyFramesEncoded || 0;
-    logEntry.total_encode_time_ms = outboundRtpReport.totalEncodeTime ?
-      parseFloat((outboundRtpReport.totalEncodeTime * 1000).toFixed(3)) : 0;
+  // 基本情報を含むログエントリ（英語項目名）
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    side: 'answer',
+    [translateStatKey('connection_state')]: peerConnection.connectionState,
+    [translateStatKey('ice_connection_state')]: peerConnection.iceConnectionState,
+    [translateStatKey('ice_gathering_state')]: peerConnection.iceGatheringState,
+    [translateStatKey('signaling_state')]: peerConnection.signalingState
+  };
 
-    // ネットワーク統計
-    logEntry.packets_sent = outboundRtpReport.packetsSent || 0;
-    logEntry.bytes_sent = outboundRtpReport.bytesSent || 0;
-    logEntry.target_bitrate = outboundRtpReport.targetBitrate || 0;
+  // 全てのstatsタイプを処理
+  stats.forEach((report) => {
+    const prefix = report.kind ? `${report.type}_${report.kind}` : report.type;
 
-    // === エラー統計（エラー発生時のみ追加）===
-    const retransmittedPackets = outboundRtpReport.retransmittedPacketsSent || 0;
-    const retransmittedBytes = outboundRtpReport.retransmittedBytesSent || 0;
-    const firCount = outboundRtpReport.firCount || 0;
-    const pliCount = outboundRtpReport.pliCount || 0;
-    const nackCount = outboundRtpReport.nackCount || 0;
+    // 基本的なレポート情報を保存
+    Object.keys(report).forEach(key => {
+      if (key !== 'type' && key !== 'kind' && key !== 'id' && key !== 'timestamp') {
+        const originalKey = `${prefix}_${key}`;
+        const translatedKey = translateStatKey(originalKey);
+        logEntry[translatedKey] = report[key];
+      }
+    });
+  });
 
-    if (retransmittedPackets > 0 || retransmittedBytes > 0 || firCount > 0 || pliCount > 0 || nackCount > 0) {
-      if (retransmittedPackets > 0) logEntry.retransmitted_packets_sent = retransmittedPackets;
-      if (retransmittedBytes > 0) logEntry.retransmitted_bytes_sent = retransmittedBytes;
-      if (firCount > 0) logEntry.fir_count = firCount;
-      if (pliCount > 0) logEntry.pli_count = pliCount;
-      if (nackCount > 0) logEntry.nack_count = nackCount;
-    }
-  }
-
-  // === RTT情報 ===
-  if (candidatePairReport) {
-    logEntry.rtt_ms = candidatePairReport.currentRoundTripTime ?
-      parseFloat((candidatePairReport.currentRoundTripTime * 1000).toFixed(3)) : 0;
-    logEntry.available_outgoing_bitrate = candidatePairReport.availableOutgoingBitrate || 0;
-  }
-
-  // === メディアソース情報 ===
-  if (mediaSourceReport) {
-    logEntry.frame_width = mediaSourceReport.width || 0;
-    logEntry.frame_height = mediaSourceReport.height || 0;
-    logEntry.frames_per_second = mediaSourceReport.framesPerSecond || 0;
-  }
+  // レポートタイプの数と概要を追加（英語変換付き）
+  const reportTypes = Array.from(stats.values()).map(r => r.type);
+  const uniqueTypes = [...new Set(reportTypes)];
+  logEntry[translateStatKey('report_types_count')] = uniqueTypes.length;
+  logEntry[translateStatKey('report_types')] = uniqueTypes.join('|');
+  logEntry[translateStatKey('total_reports')] = reportTypes.length;
 
   // 統一ログに保存
   webrtcStatsLogs.push(logEntry);

@@ -15,7 +15,7 @@ class ONNXInferenceEngine {
     // 検出結果の安定化フィルタ
     this.detectionHistory = []; // 過去の検出結果を保存
     this.maxHistoryLength = 3; // 保存する履歴の最大長（軽量化のため削減）
-    this.confidenceThreshold = 0.6; // 最小信頼度閾値を下げて検出数を増加
+    this.confidenceThreshold = 0.3; // 最小信頼度閾値を下げて検出数を増加
     
     // Performance monitoring
     this.performanceStats = {

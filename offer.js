@@ -19,9 +19,9 @@ import { ONNXInferenceEngine } from './onnxInference.js';
 
 const gamepadToAutorunInfoCon = gamepadToAutorunInfo();
 const farminGamepadToAutorunInfoCon = farminGamepadToAutorunInfo();
-//const signalingWebSocket = new WebSocket("ws://localhost:8080");
+const signalingWebSocket = new WebSocket("ws://localhost:8080");
 // ↓ Answer側PCのIPアドレスに変更
-const signalingWebSocket = new WebSocket("ws://10.100.0.35:8080");
+//const signalingWebSocket = new WebSocket("ws://10.100.0.35:8080");
 // const virtualWebSocket = new WebSocket("ws://localhost:9090/"); // エラーの原因①：WebSocketサーバーへの接続
 let peerConnection;
 let movieChannel;
@@ -1118,207 +1118,294 @@ document
 // ===== ここから詳細WebRTC統計ログ機能 =====
 const webrtcStatsLogs = [];
 
-// 前回の値記録用
-let prevFramesDecoded = null, prevFramesDecodedTime = null;
-let prevFramesReceived = null, prevFramesReceivedTime = null;
-let prevPacketsReceived = null, prevPacketsTime = null;
-let prevBytesReceived = null, prevBytesTime = null;
+// WebRTC統計キーの英語化マッピング関数
+function translateStatKey(key) {
+  const translations = {
+    // Connection state mappings
+    'connection_state': 'connection_state',
+    'ice_connection_state': 'ice_connection_state',
+    'ice_gathering_state': 'ice_gathering_state',
+    'signaling_state': 'signaling_state',
 
-// Offer側専用最適化ログスキーマ（受信・デコード・推論中心）
-function createOptimizedOfferLogEntry() {
-  const now = new Date();
-  const logEntry = {
-    // === 基本情報 ===
-    timestamp: now.toISOString(),
-    side: 'offer',
+    // Inference related
+    'inference_enabled': 'inference_enabled',
+    'total_inferences': 'total_inferences',
+    'skipped_frames_inference': 'skipped_frames_inference',
+    'min_inference_interval_ms': 'min_inference_interval_ms',
+    'detections_count': 'detections_count',
+    'detections_person_count': 'detections_person_count',
+    'max_confidence': 'max_confidence',
+    'min_confidence': 'min_confidence',
+    'avg_confidence': 'avg_confidence',
+    'person_max_area': 'person_max_area',
+    'person_min_area': 'person_min_area',
+    'person_avg_area': 'person_avg_area',
 
-    // === 接続状態 ===
-    connection_state: peerConnection ? peerConnection.connectionState : 'unknown',
-    ice_connection_state: peerConnection ? peerConnection.iceConnectionState : 'unknown',
+    // Report info
+    'report_types_count': 'report_types_count',
+    'report_types': 'report_types',
+    'total_reports': 'total_reports',
 
-    // === 映像品質（受信・デコード統計）===
-    frame_width: 0,
-    frame_height: 0,
-    frames_per_second: 0,
-    frames_received: 0,
-    frames_decoded: 0,
-    frames_dropped: 0,
-    key_frames_decoded: 0,
+    // Codec stats
+    'codec_payloadType': 'codec_payload_type',
+    'codec_mimeType': 'codec_mime_type',
+    'codec_clockRate': 'codec_clock_rate',
+    'codec_channels': 'codec_channels',
+    'codec_sdpFmtpLine': 'codec_sdp_fmtp_line',
 
-    // === 実際のパフォーマンス ===
-    actual_fps_received: 0,
-    actual_fps_decoded: 0,
-    total_decode_time_ms: 0, // avg_decode_time_msは計算で求める
+    // Inbound RTP stats
+    'inbound-rtp_packetsReceived': 'inbound_packets_received',
+    'inbound-rtp_bytesReceived': 'inbound_bytes_received',
+    'inbound-rtp_packetsLost': 'inbound_packets_lost',
+    'inbound-rtp_jitter': 'inbound_jitter',
+    'inbound-rtp_framesDecoded': 'inbound_frames_decoded',
+    'inbound-rtp_keyFramesDecoded': 'inbound_key_frames_decoded',
+    'inbound-rtp_frameWidth': 'inbound_frame_width',
+    'inbound-rtp_frameHeight': 'inbound_frame_height',
+    'inbound-rtp_framesPerSecond': 'inbound_frames_per_second',
+    'inbound-rtp_qpSum': 'inbound_qp_sum',
+    'inbound-rtp_totalDecodeTime': 'inbound_total_decode_time',
+    'inbound-rtp_totalInterFrameDelay': 'inbound_total_inter_frame_delay',
+    'inbound-rtp_audioLevel': 'inbound_audio_level',
+    'inbound-rtp_totalAudioEnergy': 'inbound_total_audio_energy',
+    'inbound-rtp_concealedSamples': 'inbound_concealed_samples',
 
-    // === ジッターバッファ（Offer側特有）===
-    jitter_buffer_delay_ms: 0,
-    jitter_buffer_emitted_count: 0,
+    // Outbound RTP stats
+    'outbound-rtp_packetsSent': 'outbound_packets_sent',
+    'outbound-rtp_bytesSent': 'outbound_bytes_sent',
+    'outbound-rtp_targetBitrate': 'outbound_target_bitrate',
+    'outbound-rtp_framesEncoded': 'outbound_frames_encoded',
+    'outbound-rtp_keyFramesEncoded': 'outbound_key_frames_encoded',
+    'outbound-rtp_totalEncodeTime': 'outbound_total_encode_time',
+    'outbound-rtp_totalPacketSendDelay': 'outbound_total_packet_send_delay',
+    'outbound-rtp_qualityLimitationReason': 'outbound_quality_limitation_reason',
+    'outbound-rtp_qualityLimitationDurations': 'outbound_quality_limitation_durations',
+    'outbound-rtp_nackCount': 'outbound_nack_count',
+    'outbound-rtp_firCount': 'outbound_fir_count',
+    'outbound-rtp_pliCount': 'outbound_pli_count',
+    'outbound-rtp_encoderImplementation': 'outbound_encoder_implementation',
 
-    // === ネットワーク統計（受信系）===
-    jitter_ms: 0,
-    rtt_ms: 0,
-    packets_received: 0,
-    packets_lost: 0,
-    bytes_received: 0,
-    header_bytes_received: 0,
-    packets_per_second: 0,
-    bitrate_kbps: 0,
-    available_outgoing_bitrate: 0
+    // Remote inbound RTP stats
+    'remote-inbound-rtp_packetsLost': 'remote_inbound_packets_lost',
+    'remote-inbound-rtp_jitter': 'remote_inbound_jitter',
+    'remote-inbound-rtp_roundTripTime': 'remote_inbound_round_trip_time',
+    'remote-inbound-rtp_totalRoundTripTime': 'remote_inbound_total_round_trip_time',
+    'remote-inbound-rtp_fractionLost': 'remote_inbound_fraction_lost',
+
+    // Remote outbound RTP stats
+    'remote-outbound-rtp_packetsSent': 'remote_outbound_packets_sent',
+    'remote-outbound-rtp_bytesSent': 'remote_outbound_bytes_sent',
+    'remote-outbound-rtp_remoteTimestamp': 'remote_outbound_remote_timestamp',
+
+    // Media source stats
+    'media-source_trackIdentifier': 'media_source_track_identifier',
+    'media-source_kind': 'media_source_kind',
+    'media-source_audioLevel': 'media_source_audio_level',
+    'media-source_totalAudioEnergy': 'media_source_total_audio_energy',
+    'media-source_width': 'media_source_width',
+    'media-source_height': 'media_source_height',
+    'media-source_frames': 'media_source_frames',
+    'media-source_framesPerSecond': 'media_source_frames_per_second',
+
+    // CSRC stats
+    'csrc_contributorSsrc': 'csrc_contributor_ssrc',
+    'csrc_inboundRtpStreamId': 'csrc_inbound_rtp_stream_id',
+
+    // Peer connection stats
+    'peer-connection_dataChannelsOpened': 'peer_connection_data_channels_opened',
+    'peer-connection_dataChannelsClosed': 'peer_connection_data_channels_closed',
+
+    // Data channel stats
+    'data-channel_label': 'data_channel_label',
+    'data-channel_protocol': 'data_channel_protocol',
+    'data-channel_dataChannelIdentifier': 'data_channel_identifier',
+    'data-channel_state': 'data_channel_state',
+    'data-channel_messagesSent': 'data_channel_messages_sent',
+    'data-channel_bytesSent': 'data_channel_bytes_sent',
+    'data-channel_messagesReceived': 'data_channel_messages_received',
+    'data-channel_bytesReceived': 'data_channel_bytes_received',
+
+    // Stream stats (deprecated)
+    'stream_streamIdentifier': 'stream_identifier',
+    'stream_trackIds': 'stream_track_ids',
+
+    // Track stats (deprecated)
+    'track_trackIdentifier': 'track_identifier',
+    'track_remoteSource': 'track_remote_source',
+    'track_ended': 'track_ended',
+
+    // Transceiver stats
+    'transceiver_senderId': 'transceiver_sender_id',
+    'transceiver_receiverId': 'transceiver_receiver_id',
+    'transceiver_mid': 'transceiver_media_id',
+
+    // Sender stats
+    'sender_mediaSourceId': 'sender_media_source_id',
+    'sender_trackId': 'sender_track_id',
+
+    // Receiver stats
+    'receiver_trackId': 'receiver_track_id',
+    'receiver_jitterBufferDelay': 'receiver_jitter_buffer_delay',
+    'receiver_jitterBufferEmittedCount': 'receiver_jitter_buffer_emitted_count',
+
+    // Transport stats
+    'transport_bytesSent': 'transport_bytes_sent',
+    'transport_bytesReceived': 'transport_bytes_received',
+    'transport_dtlsState': 'transport_dtls_state',
+    'transport_selectedCandidatePairId': 'transport_selected_candidate_pair_id',
+    'transport_localCertificateId': 'transport_local_certificate_id',
+    'transport_remoteCertificateId': 'transport_remote_certificate_id',
+    'transport_tlsVersion': 'transport_tls_version',
+    'transport_dtlsCipher': 'transport_dtls_cipher',
+    'transport_iceRole': 'transport_ice_role',
+    'transport_iceLocalUsernameFragment': 'transport_ice_local_username_fragment',
+    'transport_iceState': 'transport_ice_state',
+
+    // Candidate pair stats
+    'candidate-pair_localCandidateId': 'candidate_pair_local_candidate_id',
+    'candidate-pair_remoteCandidateId': 'candidate_pair_remote_candidate_id',
+    'candidate-pair_state': 'candidate_pair_state',
+    'candidate-pair_nominated': 'candidate_pair_nominated',
+    'candidate-pair_bytesSent': 'candidate_pair_bytes_sent',
+    'candidate-pair_bytesReceived': 'candidate_pair_bytes_received',
+    'candidate-pair_lastPacketSentTimestamp': 'candidate_pair_last_packet_sent_timestamp',
+    'candidate-pair_lastPacketReceivedTimestamp': 'candidate_pair_last_packet_received_timestamp',
+    'candidate-pair_totalRoundTripTime': 'candidate_pair_total_round_trip_time',
+    'candidate-pair_currentRoundTripTime': 'candidate_pair_current_round_trip_time',
+    'candidate-pair_availableOutgoingBitrate': 'candidate_pair_available_outgoing_bitrate',
+    'candidate-pair_requestsReceived': 'candidate_pair_requests_received',
+    'candidate-pair_requestsSent': 'candidate_pair_requests_sent',
+    'candidate-pair_responsesReceived': 'candidate_pair_responses_received',
+    'candidate-pair_responsesSent': 'candidate_pair_responses_sent',
+    'candidate-pair_consentRequestsSent': 'candidate_pair_consent_requests_sent',
+
+    // Local/Remote candidate stats
+    'local-candidate_transportId': 'local_candidate_transport_id',
+    'local-candidate_address': 'local_candidate_address',
+    'local-candidate_port': 'local_candidate_port',
+    'local-candidate_protocol': 'local_candidate_protocol',
+    'local-candidate_candidateType': 'local_candidate_type',
+    'local-candidate_priority': 'local_candidate_priority',
+    'local-candidate_url': 'local_candidate_url',
+    'remote-candidate_transportId': 'remote_candidate_transport_id',
+    'remote-candidate_address': 'remote_candidate_address',
+    'remote-candidate_port': 'remote_candidate_port',
+    'remote-candidate_protocol': 'remote_candidate_protocol',
+    'remote-candidate_candidateType': 'remote_candidate_type',
+    'remote-candidate_priority': 'remote_candidate_priority',
+    'remote-candidate_url': 'remote_candidate_url',
+
+    // Certificate stats
+    'certificate_fingerprint': 'certificate_fingerprint',
+    'certificate_fingerprintAlgorithm': 'certificate_fingerprint_algorithm',
+    'certificate_base64Certificate': 'certificate_base64_certificate',
   };
 
-  // === 条件分岐: エラー統計（エラー発生時のみ）===
-  // 実際のエラー検出ロジックは統計収集部分で設定
-
-  // === 条件分岐: 推論統計（推論有効時のみ）===
-  if (isInferenceEnabled) {
-    logEntry.inference_enabled = true;
-    logEntry.canvas_visible = isCanvasVisible;
-    logEntry.total_inferences = 0;
-    logEntry.skipped_frames_inference = 0;
-    logEntry.min_inference_interval_ms = 0;
-
-    // 検出結果統計
-    logEntry.detections_count = 0;
-    logEntry.detections_person_count = 0;
-    logEntry.max_confidence = 0;
-  } else {
-    logEntry.inference_enabled = false;
+  // フォールバック処理: マッピングされていないキーを小文字のスネークケースに変換
+  if (translations[key]) {
+    return translations[key];
   }
 
-  return logEntry;
+  // キーが空の場合は'unknown_field'を返す
+  if (!key || key.trim() === '') {
+    return 'unknown_field';
+  }
+
+  // キャメルケースをスネークケースに変換し、すべて小文字にする
+  return key
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .replace(/-/g, '_')
+    .toLowerCase();
 }
 
-setInterval(async function collectOptimizedWebRTCStats() {
+
+
+setInterval(async function collectCompleteOfferWebRTCStats() {
   if (!peerConnection) return;
   const stats = await peerConnection.getStats();
 
-  // 最適化されたOffer側スキーマでログエントリを作成
-  let logEntry = createOptimizedOfferLogEntry();
+  // 全statsを格納するオブジェクト
+  const allStats = {};
 
-  let inboundRtpReport, candidatePairReport;
-
+  // 全てのstatsレポートを収集
   stats.forEach((report) => {
-    if (report.type === "inbound-rtp" && report.kind === "video" && !report.isRemote) {
-      inboundRtpReport = report;
-    } else if (report.type === "candidate-pair" && report.state === "succeeded") {
-      candidatePairReport = report;
+    // reportのtypeとkindを組み合わせてキーを作成
+    const key = report.kind ? `${report.type}_${report.kind}` : report.type;
+
+    if (!allStats[key]) {
+      allStats[key] = [];
     }
+    allStats[key].push(report);
   });
 
-  // === 推論統計を条件付きで追加 ===
+  // 基本情報を含むログエントリ（英語項目名）
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    side: 'offer',
+    [translateStatKey('connection_state')]: peerConnection.connectionState,
+    [translateStatKey('ice_connection_state')]: peerConnection.iceConnectionState,
+    [translateStatKey('ice_gathering_state')]: peerConnection.iceGatheringState,
+    [translateStatKey('signaling_state')]: peerConnection.signalingState
+  };
+
+  // === 推論結果情報を追加（英語項目名） ===
   if (isInferenceEnabled && onnxEngine) {
     const perfStats = onnxEngine.getPerformanceStats();
-    logEntry.total_inferences = perfStats.totalInferences || 0;
-    logEntry.skipped_frames_inference = perfStats.skippedFrames || 0;
-    logEntry.min_inference_interval_ms = onnxEngine.minInferenceInterval || 0;
+    logEntry[translateStatKey('inference_enabled')] = true;
+    logEntry[translateStatKey('total_inferences')] = perfStats.totalInferences || 0;
+    logEntry[translateStatKey('skipped_frames_inference')] = perfStats.skippedFrames || 0;
+    logEntry[translateStatKey('min_inference_interval_ms')] = onnxEngine.minInferenceInterval || 0;
 
     // 現在の検出結果統計を追加
     if (currentDetections && currentDetections.length > 0) {
-      logEntry.detections_count = currentDetections.length;
-      logEntry.detections_person_count = currentDetections.filter(d => d.classId === 0).length;
+      const personDetections = currentDetections.filter(d => d.classId === 0);
+      logEntry[translateStatKey('detections_count')] = currentDetections.length;
+      logEntry[translateStatKey('detections_person_count')] = personDetections.length;
       const confidences = currentDetections.map(d => d.confidence);
-      logEntry.max_confidence = Math.max(...confidences);
+      logEntry[translateStatKey('max_confidence')] = Math.max(...confidences);
+      logEntry[translateStatKey('min_confidence')] = Math.min(...confidences);
+      logEntry[translateStatKey('avg_confidence')] = confidences.reduce((sum, c) => sum + c, 0) / confidences.length;
+
+      // 人検知の詳細統計
+      if (personDetections.length > 0) {
+        const personAreas = personDetections.map(p => p.bbox.width * p.bbox.height);
+        logEntry[translateStatKey('person_max_area')] = Math.max(...personAreas);
+        logEntry[translateStatKey('person_min_area')] = Math.min(...personAreas);
+        logEntry[translateStatKey('person_avg_area')] = personAreas.reduce((sum, area) => sum + area, 0) / personAreas.length;
+      }
+    } else {
+      logEntry[translateStatKey('detections_count')] = 0;
+      logEntry[translateStatKey('detections_person_count')] = 0;
+      logEntry[translateStatKey('max_confidence')] = 0;
     }
+  } else {
+    logEntry[translateStatKey('inference_enabled')] = false;
   }
 
-  // Video品質とデコーディング統計
-  if (inboundRtpReport) {
-    const ts = inboundRtpReport.timestamp;
+  // 全てのstatsタイプを処理（英語変換付き）
+  stats.forEach((report) => {
+    const prefix = report.kind ? `${report.type}_${report.kind}` : report.type;
 
-    logEntry.frame_width = inboundRtpReport.frameWidth || 0;
-    logEntry.frame_height = inboundRtpReport.frameHeight || 0;
-    logEntry.frames_per_second = inboundRtpReport.framesPerSecond || 0;
-    logEntry.frames_decoded = inboundRtpReport.framesDecoded || 0;
-    logEntry.frames_received = inboundRtpReport.framesReceived || 0;
-    logEntry.frames_dropped = inboundRtpReport.framesDropped || 0;
-    logEntry.key_frames_decoded = inboundRtpReport.keyFramesDecoded || 0;
-    logEntry.total_decode_time_ms = inboundRtpReport.totalDecodeTime ?
-      parseFloat((inboundRtpReport.totalDecodeTime * 1000).toFixed(3)) : 0;
-    logEntry.jitter_buffer_delay_ms = inboundRtpReport.jitterBufferDelay ?
-      parseFloat((inboundRtpReport.jitterBufferDelay * 1000).toFixed(3)) : 0;
-    logEntry.jitter_buffer_emitted_count = inboundRtpReport.jitterBufferEmittedCount || 0;
-
-    // ネットワーク統計
-    logEntry.jitter_ms = inboundRtpReport.jitter ?
-      parseFloat((inboundRtpReport.jitter * 1000).toFixed(3)) : 0;
-    logEntry.packets_received = inboundRtpReport.packetsReceived || 0;
-    logEntry.packets_lost = inboundRtpReport.packetsLost || 0;
-    logEntry.bytes_received = inboundRtpReport.bytesReceived || 0;
-    logEntry.header_bytes_received = inboundRtpReport.headerBytesReceived || 0;
-
-    // === エラー統計（エラー発生時のみ追加）===
-    const firCount = inboundRtpReport.firCount || 0;
-    const pliCount = inboundRtpReport.pliCount || 0;
-    const nackCount = inboundRtpReport.nackCount || 0;
-
-    if (firCount > 0 || pliCount > 0 || nackCount > 0) {
-      logEntry.fir_count = firCount;
-      logEntry.pli_count = pliCount;
-      logEntry.nack_count = nackCount;
-    }
-
-    // フレームレート計算
-    if (inboundRtpReport.framesReceived !== undefined) {
-      if (prevFramesReceived !== null && prevFramesReceivedTime !== null) {
-        const deltaTimeSec = (ts - prevFramesReceivedTime) / 1000;
-        const deltaFrames = inboundRtpReport.framesReceived - prevFramesReceived;
-        if (deltaTimeSec > 0) {
-          logEntry.actual_fps_received = parseFloat((deltaFrames / deltaTimeSec).toFixed(3));
-        }
+    // 基本的なレポート情報を保存
+    Object.keys(report).forEach(key => {
+      if (key !== 'type' && key !== 'kind' && key !== 'id' && key !== 'timestamp') {
+        const originalKey = `${prefix}_${key}`;
+        const translatedKey = translateStatKey(originalKey);
+        logEntry[translatedKey] = report[key];
       }
-      prevFramesReceived = inboundRtpReport.framesReceived;
-      prevFramesReceivedTime = ts;
-    }
+    });
+  });
 
-    if (inboundRtpReport.framesDecoded !== undefined) {
-      if (prevFramesDecoded !== null && prevFramesDecodedTime !== null) {
-        const deltaTimeSec = (ts - prevFramesDecodedTime) / 1000;
-        const deltaFrames = inboundRtpReport.framesDecoded - prevFramesDecoded;
-        if (deltaTimeSec > 0) {
-          logEntry.actual_fps_decoded = parseFloat((deltaFrames / deltaTimeSec).toFixed(3));
-        }
-      }
-      prevFramesDecoded = inboundRtpReport.framesDecoded;
-      prevFramesDecodedTime = ts;
-    }
-
-    // パケットレート・ビットレート計算
-    if (inboundRtpReport.packetsReceived !== undefined) {
-      if (prevPacketsReceived !== null && prevPacketsTime !== null) {
-        const deltaTimeSec = (ts - prevPacketsTime) / 1000;
-        const deltaPackets = inboundRtpReport.packetsReceived - prevPacketsReceived;
-        if (deltaTimeSec > 0) {
-          logEntry.packets_per_second = parseFloat((deltaPackets / deltaTimeSec).toFixed(3));
-        }
-      }
-      prevPacketsReceived = inboundRtpReport.packetsReceived;
-      prevPacketsTime = ts;
-    }
-
-    if (inboundRtpReport.bytesReceived !== undefined) {
-      if (prevBytesReceived !== null && prevBytesTime !== null) {
-        const deltaTimeSec = (ts - prevBytesTime) / 1000;
-        const deltaBytes = inboundRtpReport.bytesReceived - prevBytesReceived;
-        if (deltaTimeSec > 0) {
-          logEntry.bitrate_kbps = parseFloat(((deltaBytes * 8) / 1000 / deltaTimeSec).toFixed(3));
-        }
-      }
-      prevBytesReceived = inboundRtpReport.bytesReceived;
-      prevBytesTime = ts;
-    }
-  }
-
-  // RTT情報
-  if (candidatePairReport) {
-    logEntry.rtt_ms = candidatePairReport.currentRoundTripTime ?
-      parseFloat((candidatePairReport.currentRoundTripTime * 1000).toFixed(3)) : 0;
-    logEntry.available_outgoing_bitrate = candidatePairReport.availableOutgoingBitrate || 0;
-  }
-
+  // レポートタイプの数と概要を追加（英語変換付き）
+  const reportTypes = Array.from(stats.values()).map(r => r.type);
+  const uniqueTypes = [...new Set(reportTypes)];
+  logEntry[translateStatKey('report_types_count')] = uniqueTypes.length;
+  logEntry[translateStatKey('report_types')] = uniqueTypes.join('|');
+  logEntry[translateStatKey('total_reports')] = reportTypes.length;
 
   // 統一ログに保存
   webrtcStatsLogs.push(logEntry);
-  
+
   // メモリ使用量制限（最新1000エントリまで保持）
   if (webrtcStatsLogs.length > 1000) {
     webrtcStatsLogs.splice(0, webrtcStatsLogs.length - 1000);
@@ -1327,11 +1414,11 @@ setInterval(async function collectOptimizedWebRTCStats() {
 
 // 統一WebRTC統計のCSV出力機能
 function saveDetailedWebRTCStats() {
-  console.log("=== 最適化統計保存機能デバッグ ===");
+  console.log("=== Offer側WebRTC統計保存機能デバッグ ===");
   console.log("ボタンクリック検知: OK");
   console.log("webrtcStatsLogs配列長:", webrtcStatsLogs.length);
   console.log("peerConnection状態:", peerConnection ? peerConnection.connectionState : "未接続");
-  console.log("最適化スキーマ: Offer側専用（受信・デコード・推論中心）");
+  console.log("統計スキーマ: Offer側全WebRTCStats対応（推論情報含む）");
 
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -1340,10 +1427,34 @@ function saveDetailedWebRTCStats() {
 
   if (webrtcStatsLogs.length > 0) {
     console.log("統計データ有り - CSV作成開始");
+    console.log("統計項目数:", Object.keys(webrtcStatsLogs[0]).length);
+    console.log("利用可能なレポートタイプ:", webrtcStatsLogs[0].report_types);
+
     const headers = Object.keys(webrtcStatsLogs[0]);
+
+    // デバッグ情報: 空のヘッダーや問題のあるヘッダーをチェック
+    const emptyHeaders = headers.filter(h => !h || h.trim() === '');
+    const suspiciousHeaders = headers.filter(h => h.includes('undefined') || h.includes('null'));
+
+    if (emptyHeaders.length > 0) {
+      console.warn('Empty headers found:', emptyHeaders);
+    }
+    if (suspiciousHeaders.length > 0) {
+      console.warn('Suspicious headers found:', suspiciousHeaders);
+    }
+
+    console.log('Sample headers:', headers.slice(0, 10));
+    console.log('Total headers:', headers.length);
+
     const csv = [
       headers.join(","),
-      ...webrtcStatsLogs.map(row => headers.map(h => row[h] ?? "").join(","))
+      ...webrtcStatsLogs.map(row => headers.map(h => {
+        const value = row[h];
+        // 値がundefinedやnullの場合は空文字、オブジェクトの場合はJSON文字列に変換
+        if (value === undefined || value === null) return "";
+        if (typeof value === 'object') return JSON.stringify(value).replace(/"/g, '""');
+        return String(value).replace(/"/g, '""');
+      }).join(","))
     ].join("\n");
 
     console.log("CSV作成完了 - ダウンロード開始");
@@ -1351,12 +1462,12 @@ function saveDetailedWebRTCStats() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `offer_webrtc_unified_stats_${ts}.csv`;
+    a.download = `offer_webrtc_stats_${ts}.csv`;
     a.click();
     URL.revokeObjectURL(url);
 
-    console.log(`✅ 統一WebRTC統計を保存: ${webrtcStatsLogs.length}エントリ (${ts})`);
-    alert(`統計データを保存しました (${webrtcStatsLogs.length}エントリ)`);
+    console.log(`✅ Offer側WebRTC統計を保存: ${webrtcStatsLogs.length}エントリ (${ts})`);
+    alert(`Offer側統計データを保存しました (${webrtcStatsLogs.length}エントリ、${headers.length}項目)`);
   } else {
     console.warn("❌ 保存する統計データがありません");
     console.log("統計収集が動作していない可能性があります");
