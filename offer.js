@@ -19,9 +19,9 @@ import { ONNXInferenceEngine } from './onnxInference.js';
 
 const gamepadToAutorunInfoCon = gamepadToAutorunInfo();
 const farminGamepadToAutorunInfoCon = farminGamepadToAutorunInfo();
-const signalingWebSocket = new WebSocket("ws://localhost:8080");
+//const signalingWebSocket = new WebSocket("ws://localhost:8080");
 // ↓ Answer側PCのIPアドレスに変更
-// const signalingWebSocket = new WebSocket("ws://192.168.1.100:8080");
+const signalingWebSocket = new WebSocket("ws://10.100.0.35:8080");
 // const virtualWebSocket = new WebSocket("ws://localhost:9090/"); // エラーの原因①：WebSocketサーバーへの接続
 let peerConnection;
 let movieChannel;
@@ -29,7 +29,6 @@ let dataChannel;
 const videoElement = document.getElementById("remote-video");
 const canvasElement = document.getElementById("video-canvas");
 const canvasSonoki = document.getElementById('video-canvas-sonoki');
-const video = document.getElementById('remote-video');
 
 // ONNX Inference Engine
 let onnxEngine = null;
@@ -181,18 +180,23 @@ class SafetySystem {
   triggerSafety(detections) {
     this.isSafetyTriggered = true;
     this.lastSafetyTrigger = Date.now();
-    
+
     console.warn('🚨 SAFETY TRIGGERED: Person detected!');
-    
+
+    // 緊急アラート音を再生
+    if (audioAlertSystem) {
+      audioAlertSystem.playEmergencyAlert();
+    }
+
     // トラクタ停止信号を送信
     this.sendTractorStop();
-    
-    // パトライト点灯信号を送信  
+
+    // パトライト点灯信号を送信
     this.sendWarningLight(true);
-    
+
     // UI更新
     this.updateSafetyStatus();
-    
+
     // 安全イベントをログ
     this.logSafetyEvent('TRIGGERED', detections);
   }
@@ -272,6 +276,15 @@ class SafetySystem {
         console.log(`Warning light ${activate ? 'activated' : 'deactivated'}`);
       } catch (error) {
         console.error('Failed to send warning light signal:', error);
+      }
+    }
+
+    // パトライト音声も制御
+    if (audioAlertSystem) {
+      if (activate) {
+        audioAlertSystem.startContinuousBeep();
+      } else {
+        audioAlertSystem.stopContinuousBeep();
       }
     }
   }
@@ -359,6 +372,157 @@ class SafetySystem {
 
 // 安全システムインスタンスを作成
 const safetySystem = new SafetySystem();
+
+// =====音声アラートシステム=====
+class AudioAlertSystem {
+  constructor() {
+    this.audioContext = null;
+    this.isEnabled = true;
+    this.alertVolume = 0.5; // 0.0 - 1.0
+    this.initializeAudio();
+  }
+
+  async initializeAudio() {
+    try {
+      // WebAudioAPIコンテキスト初期化
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      console.log('Audio context initialized');
+    } catch (error) {
+      console.error('Failed to initialize audio context:', error);
+    }
+  }
+
+  // 緊急アラート音を生成・再生
+  playEmergencyAlert() {
+    if (!this.audioContext || !this.isEnabled) return;
+
+    // ユーザーインタラクションが必要な場合は、コンテキストを再開
+    if (this.audioContext.state === 'suspended') {
+      this.audioContext.resume();
+    }
+
+    const duration = 2.0; // 2秒間
+    const frequency1 = 800; // 高音
+    const frequency2 = 400; // 低音
+
+    // オシレーター1（高音）
+    const oscillator1 = this.audioContext.createOscillator();
+    const gainNode1 = this.audioContext.createGain();
+
+    oscillator1.frequency.setValueAtTime(frequency1, this.audioContext.currentTime);
+    oscillator1.type = 'sine';
+
+    // エンベロープ設定（急激な音量変化を避ける）
+    gainNode1.gain.setValueAtTime(0, this.audioContext.currentTime);
+    gainNode1.gain.linearRampToValueAtTime(this.alertVolume * 0.8, this.audioContext.currentTime + 0.1);
+    gainNode1.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration);
+
+    oscillator1.connect(gainNode1);
+    gainNode1.connect(this.audioContext.destination);
+
+    oscillator1.start(this.audioContext.currentTime);
+    oscillator1.stop(this.audioContext.currentTime + duration);
+
+    // オシレーター2（低音、0.5秒後に開始）
+    setTimeout(() => {
+      if (!this.audioContext) return;
+
+      const oscillator2 = this.audioContext.createOscillator();
+      const gainNode2 = this.audioContext.createGain();
+
+      oscillator2.frequency.setValueAtTime(frequency2, this.audioContext.currentTime);
+      oscillator2.type = 'sine';
+
+      gainNode2.gain.setValueAtTime(0, this.audioContext.currentTime);
+      gainNode2.gain.linearRampToValueAtTime(this.alertVolume * 0.6, this.audioContext.currentTime + 0.1);
+      gainNode2.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration - 0.5);
+
+      oscillator2.connect(gainNode2);
+      gainNode2.connect(this.audioContext.destination);
+
+      oscillator2.start(this.audioContext.currentTime);
+      oscillator2.stop(this.audioContext.currentTime + duration - 0.5);
+    }, 500);
+
+    console.log('🔊 Emergency alert sound played');
+  }
+
+  // パトライト音を生成・再生
+  playWarningBeep() {
+    if (!this.audioContext || !this.isEnabled) return;
+
+    if (this.audioContext.state === 'suspended') {
+      this.audioContext.resume();
+    }
+
+    const beepDuration = 0.3;
+    const frequency = 1000;
+
+    const oscillator = this.audioContext.createOscillator();
+    const gainNode = this.audioContext.createGain();
+
+    oscillator.frequency.setValueAtTime(frequency, this.audioContext.currentTime);
+    oscillator.type = 'square';
+
+    gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
+    gainNode.gain.linearRampToValueAtTime(this.alertVolume * 0.4, this.audioContext.currentTime + 0.05);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + beepDuration);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(this.audioContext.destination);
+
+    oscillator.start(this.audioContext.currentTime);
+    oscillator.stop(this.audioContext.currentTime + beepDuration);
+  }
+
+  // 連続ビープ音（パトライト用）
+  startContinuousBeep() {
+    if (!this.isEnabled) return;
+
+    this.stopContinuousBeep();
+
+    this.beepInterval = setInterval(() => {
+      this.playWarningBeep();
+    }, 800); // 0.8秒間隔
+
+    console.log('🔊 Continuous warning beep started');
+  }
+
+  // 連続ビープ音停止
+  stopContinuousBeep() {
+    if (this.beepInterval) {
+      clearInterval(this.beepInterval);
+      this.beepInterval = null;
+      console.log('🔇 Continuous warning beep stopped');
+    }
+  }
+
+  // 音量設定
+  setVolume(volume) {
+    this.alertVolume = Math.max(0, Math.min(1, volume));
+    console.log(`Audio alert volume set to ${(this.alertVolume * 100).toFixed(0)}%`);
+  }
+
+  // 音声アラート有効/無効
+  setEnabled(enabled) {
+    this.isEnabled = enabled;
+    if (!enabled) {
+      this.stopContinuousBeep();
+    }
+    console.log(`Audio alerts ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  // AudioContextのクリーンアップ
+  cleanup() {
+    this.stopContinuousBeep();
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close();
+    }
+  }
+}
+
+// 音声アラートシステムインスタンスを作成
+const audioAlertSystem = new AudioAlertSystem();
 
 // ステータス表示更新
 function updateInferenceStatus(status) {
@@ -602,8 +766,9 @@ async function runInference(videoElement) {
 // Performance monitoring variables for offer side
 let inferenceCount = 0;
 let totalInferenceTime = 0;
-let dynamicInterval = 100; // Start with 100ms (10 FPS) - 軽量化
+let dynamicInterval = 166; // Start with 166ms (6 FPS) - さらに軽量化
 let isInferenceBusy = false; // 推論処理中フラグ
+let inferenceWorker = null; // Web Worker for offloading inference
 
 // Start continuous inference on received video stream with adaptive FPS
 function startVideoInference(videoElement) {
@@ -688,13 +853,13 @@ function startVideoInference(videoElement) {
           )}ms, Actual FPS: ${actualFPS.toFixed(1)}`
         );
 
-        // Adaptive interval adjustment (より保守的)
-        if (avgInferenceTime < 50) {
-          dynamicInterval = Math.max(50, dynamicInterval - 5); // Up to 20 FPS
-        } else if (avgInferenceTime < 100) {
-          dynamicInterval = Math.max(100, dynamicInterval - 2); // Up to 10 FPS
-        } else if (avgInferenceTime > 200) {
-          dynamicInterval = Math.min(500, dynamicInterval + 25); // Down to 2 FPS
+        // Adaptive interval adjustment (よりスムーズな映像のため保守的に)
+        if (avgInferenceTime < 80) {
+          dynamicInterval = Math.max(133, dynamicInterval - 8); // Up to 7.5 FPS
+        } else if (avgInferenceTime < 120) {
+          dynamicInterval = Math.max(166, dynamicInterval - 5); // Up to 6 FPS
+        } else if (avgInferenceTime > 300) {
+          dynamicInterval = Math.min(1000, dynamicInterval + 50); // Down to 1 FPS
         }
         
         // ONNXエンジンの推論間隔も調整
@@ -709,9 +874,11 @@ function startVideoInference(videoElement) {
 
     // Schedule next inference (requestAnimationFrame使用でブラウザに最適化を委ねる)
     if (isInferenceEnabled) {
+      // 推論有効時でも映像表示を優先し、より長い間隔に
       setTimeout(inferenceLoop, dynamicInterval);
     } else {
-      setTimeout(inferenceLoop, 100); // 推論オフ時は軽量チェック
+      // 推論オフ時はさらに軽量に - 映像の滑らかさを最優先
+      setTimeout(inferenceLoop, 200); // 推論オフ時はより軽量
     }
   }
 
@@ -861,9 +1028,32 @@ async function startConnection() {
   const remoteStream = new MediaStream();
   peerConnection.ontrack = (event) => {
     console.log("OFFER: Received track from Answer side:", event.track);
+    console.log("OFFER: Track readyState:", event.track.readyState);
+    console.log("OFFER: Track enabled:", event.track.enabled);
+    console.log("OFFER: Track kind:", event.track.kind);
     remoteStream.addTrack(event.track);
     videoElement.srcObject = remoteStream;
     console.log("OFFER: Video element srcObject set");
+
+    // Force video play
+    //videoElement.play().catch(e => console.log("Play failed:", e));
+
+    // Add multiple event listeners for debugging
+    videoElement.addEventListener("loadstart", () => console.log("OFFER: Video loadstart"));
+    videoElement.addEventListener("loadedmetadata", () => console.log("OFFER: Video loadedmetadata"));
+    videoElement.addEventListener("canplay", () => console.log("OFFER: Video canplay"));
+    videoElement.addEventListener("canplaythrough", () => console.log("OFFER: Video canplaythrough"));
+    videoElement.addEventListener("playing", () => console.log("OFFER: Video playing"));
+    videoElement.addEventListener("error", (e) => console.log("OFFER: Video error:", e));
+
+    // Check video element properties immediately
+    setTimeout(() => {
+      console.log("OFFER: Video readyState:", videoElement.readyState);
+      console.log("OFFER: Video networkState:", videoElement.networkState);
+      console.log("OFFER: Video dimensions:", videoElement.videoWidth, "x", videoElement.videoHeight);
+      console.log("OFFER: Video currentTime:", videoElement.currentTime);
+      console.log("OFFER: Video duration:", videoElement.duration);
+    }, 1000);
 
     videoElement.addEventListener("loadeddata", async () => {
       console.log("OFFER: Video loadeddata event fired");

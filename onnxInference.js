@@ -10,12 +10,12 @@ class ONNXInferenceEngine {
     // this.modelPath = './best.onnx';
     this.modelPath = "./yolo11n.onnx"; 
     this.lastInferenceTime = 0;
-    this.minInferenceInterval = 100; // 最小推論間隔（ms）
-    
+    this.minInferenceInterval = 166; // 最小推論間隔（ms）- 映像の滑らかさ優先
+
     // 検出結果の安定化フィルタ
     this.detectionHistory = []; // 過去の検出結果を保存
-    this.maxHistoryLength = 5; // 保存する履歴の最大長
-    this.confidenceThreshold = 0.75; // 最小信頼度閾値（75%以下は非表示）
+    this.maxHistoryLength = 3; // 保存する履歴の最大長（軽量化のため削減）
+    this.confidenceThreshold = 0.6; // 最小信頼度閾値を下げて検出数を増加
     
     // Performance monitoring
     this.performanceStats = {
@@ -107,15 +107,21 @@ class ONNXInferenceEngine {
     }
   }
 
-  // Preprocess video frame for ONNX inference
+  // Preprocess video frame for ONNX inference with enhancement
   preprocessFrame(videoElement, targetWidth = 640, targetHeight = 640) {
     if (!this.inferenceCanvas || !this.inferenceContext) return null;
-    
+
     this.inferenceCanvas.width = targetWidth;
     this.inferenceCanvas.height = targetHeight;
-    
+
+    // 画像強化フィルタを適用（コントラスト・明度調整）
+    this.inferenceContext.filter = 'contrast(110%) brightness(110%)';
+
     // Draw video frame to canvas
     this.inferenceContext.drawImage(videoElement, 0, 0, targetWidth, targetHeight);
+
+    // フィルタをリセット
+    this.inferenceContext.filter = 'none';
     
     // Get image data
     const imageData = this.inferenceContext.getImageData(0, 0, targetWidth, targetHeight);
@@ -181,7 +187,8 @@ class ONNXInferenceEngine {
         }
         
         // 信頼度がしきい値を超え、かつ「人」(classId: 0) の場合のみ採用
-        if (maxScore > this.confidenceThreshold && classId === 0) {
+        // より柔軟な閾値で検出精度を向上
+        if (maxScore > Math.max(0.4, this.confidenceThreshold * 0.7) && classId === 0) {
             boxes.push({
                 classId: classId,
                 confidence: maxScore,
@@ -281,8 +288,8 @@ nonMaxSuppression(boxes, iouThreshold) {
         }
       }
       
-      // 少なくとも2回以上検出されているか、高い信頼度の場合は採用
-      if (stabilityCount >= 2 || detection.confidence > 0.7) {
+      // 安定性フィルタを緩和して検出精度を向上
+      if (stabilityCount >= 1 || detection.confidence > 0.65) {
         stableDetections.push(detection);
       }
     }
@@ -432,12 +439,12 @@ nonMaxSuppression(boxes, iouThreshold) {
     };
   }
 
-  // 推論間隔を動的調整
+  // 推論間隔を動的調整（映像の滑らかさを重視）
   adjustInferenceInterval(averageTime) {
-    if (averageTime > 100) {
-      this.minInferenceInterval = Math.min(500, this.minInferenceInterval + 50);
-    } else if (averageTime < 50) {
-      this.minInferenceInterval = Math.max(50, this.minInferenceInterval - 10);
+    if (averageTime > 200) {
+      this.minInferenceInterval = Math.min(1000, this.minInferenceInterval + 33);
+    } else if (averageTime < 100) {
+      this.minInferenceInterval = Math.max(133, this.minInferenceInterval - 16);
     }
   }
 
@@ -452,7 +459,7 @@ nonMaxSuppression(boxes, iouThreshold) {
     };
     this.lastInferenceTime = 0;
     this.detectionHistory = [];
-    this.minInferenceInterval = 100; // デフォルト値にリセット
+    this.minInferenceInterval = 166; // デフォルト値にリセット（映像の滑らかさ優先）
     console.log("ONNX performance stats and detection history reset");
   }
   

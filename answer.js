@@ -1,5 +1,5 @@
-
-const signalingSocket = new WebSocket("ws://localhost:8080");
+//const signalingSocket = new WebSocket("ws://localhost:8080");
+const signalingSocket = new WebSocket("ws://10.100.0.35:8080");
 const autorunSocket = new WebSocket("ws://127.0.0.1:8081");
 let peerConnection;
 let remoteDataChannel = null;
@@ -14,7 +14,7 @@ const cameraSelect = document.getElementById("camera-select");
 // 安全システム処理関数
 function handleEmergencyStop(data) {
   console.warn('🚨 EMERGENCY STOP RECEIVED:', data);
-  
+
   // トラクタ制御システムに停止信号を送信
   if (autorunSocket && autorunSocket.readyState === WebSocket.OPEN) {
     const emergencyStopCommand = {
@@ -23,7 +23,7 @@ function handleEmergencyStop(data) {
       reason: data.reason,
       action: "immediate_stop"
     };
-    
+
     try {
       autorunSocket.send(JSON.stringify(emergencyStopCommand));
       console.log('Emergency stop command sent to tractor control system');
@@ -33,14 +33,14 @@ function handleEmergencyStop(data) {
   } else {
     console.error('Tractor control connection not available');
   }
-  
+
   // ローカルUIも更新
   showEmergencyAlert("人を検知しました！トラクタを緊急停止します。");
 }
 
 function handleWarningLight(data) {
   console.log(`Warning light ${data.action}:`, data);
-  
+
   // パトライト制御システムに信号を送信
   if (autorunSocket && autorunSocket.readyState === WebSocket.OPEN) {
     const warningLightCommand = {
@@ -49,7 +49,7 @@ function handleWarningLight(data) {
       timestamp: data.timestamp,
       pattern: "emergency" // 点滅パターン
     };
-    
+
     try {
       autorunSocket.send(JSON.stringify(warningLightCommand));
       console.log(`Warning light ${data.action} command sent`);
@@ -57,7 +57,7 @@ function handleWarningLight(data) {
       console.error('Failed to send warning light command:', error);
     }
   }
-  
+
   // ローカルUIも更新
   updateWarningLightStatus(data.action === "on");
 }
@@ -127,19 +127,49 @@ let mr1000aReceiveInfo = {
   stopStatus: 0,
 };
 
+
 signalingSocket.onmessage = async (event) => {
   const { type, payload } = JSON.parse(event.data);
 
   if (type === "offer") {
+    console.log("ANSWER: Received offer, creating PeerConnection");
+
     peerConnection = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:10.100.0.35:3478" }],
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:10.100.0.35:3478" }
+      ],
     });
+
+    // 接続状態の監視
+    peerConnection.onconnectionstatechange = () => {
+      console.log("ANSWER: PeerConnection state:", peerConnection.connectionState);
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+      console.log("ANSWER: ICE connection state:", peerConnection.iceConnectionState);
+    };
+
+    peerConnection.onicegatheringstatechange = () => {
+      console.log("ANSWER: ICE gathering state:", peerConnection.iceGatheringState);
+    };
 
     await peerConnection.setRemoteDescription(
       new RTCSessionDescription({ type: "offer", sdp: payload.sdp })
     );
 
-    stream.getTracks().forEach((track) => {
+    console.log("ANSWER: Remote description set successfully");
+
+    // ストリームが存在するかチェック
+    if (!stream) {
+      console.error("ANSWER: No stream available! Please click 'Get Capture' first.");
+      alert("カメラストリームが取得されていません。先に'Get Capture'ボタンをクリックしてください。");
+      return;
+    }
+
+    console.log("ANSWER: Adding tracks to peer connection");
+    stream.getTracks().forEach((track, index) => {
+      console.log(`ANSWER: Adding track ${index}:`, track);
       peerConnection.addTrack(track, stream);
     });
 
@@ -225,17 +255,21 @@ signalingSocket.onmessage = async (event) => {
       }
     };
 
+    console.log("ANSWER: Processing queued ICE candidates:", iceCandidateQueue.length);
     while (iceCandidateQueue.length > 0) {
       const candidate = iceCandidateQueue.shift();
       await peerConnection.addIceCandidate(candidate);
     }
 
+    console.log("ANSWER: Creating answer...");
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
 
+    console.log("ANSWER: Sending answer to signaling server");
     signalingSocket.send(
       JSON.stringify({ type: "answer", payload: { sdp: answer.sdp } })
     );
+    console.log("ANSWER: Answer sent successfully");
   } else if (type === "ice-offer") {
     const candidate = new RTCIceCandidate(payload.candidate);
 
@@ -310,17 +344,72 @@ cameraSelect.onchange = (_) => {
 };
 
 streamCaptureBtn.addEventListener("click", async () => {
-  stream = await navigator.mediaDevices.getUserMedia({
-    video: {
+  try {
+    console.log("ANSWER: Attempting to get camera with deviceId:", deviceId);
+
+    // カメラ制約を作成
+    const videoConstraints = {
       width: Number(document.getElementById("video-width").value),
       height: Number(document.getElementById("video-height").value),
       frameRate: Number(document.getElementById("video-rate").value),
-      deviceId: String(deviceId),
-    },
-  });
-  const videoElement = document.getElementById("local-video");
-  videoElement.srcObject = stream;
+    };
 
+    // deviceIdが"default"でない場合のみ指定
+    if (deviceId !== "default") {
+      videoConstraints.deviceId = { exact: deviceId };
+    }
+
+    console.log("ANSWER: Video constraints:", videoConstraints);
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: videoConstraints,
+    });
+
+    const videoElement = document.getElementById("local-video");
+    videoElement.srcObject = stream;
+
+    // ビデオ要素の再生を明示的に開始
+    try {
+      await videoElement.play();
+      console.log("ANSWER: Video element started playing");
+    } catch (playError) {
+      console.warn("ANSWER: Video play failed:", playError);
+    }
+
+    // Debug: Check stream status
+    console.log("ANSWER: Stream obtained:", stream);
+    console.log("ANSWER: Stream active:", stream.active);
+    console.log("ANSWER: Video tracks:", stream.getVideoTracks());
+    stream.getVideoTracks().forEach((track, index) => {
+      console.log(`ANSWER: Video track ${index}:`, track);
+      console.log(`ANSWER: Track ${index} readyState:`, track.readyState);
+      console.log(`ANSWER: Track ${index} enabled:`, track.enabled);
+      console.log(`ANSWER: Track ${index} settings:`, track.getSettings());
+    });
+
+    // ストリーム取得成功をUIに反映
+    streamCaptureBtn.textContent = "Camera Active";
+    streamCaptureBtn.style.backgroundColor = "#28a745";
+
+  } catch (error) {
+    console.error("ANSWER: Failed to get camera:", error);
+    console.error("ANSWER: Error details:", error.name, error.message);
+
+    // エラーをUIに反映
+    streamCaptureBtn.textContent = "Camera Error";
+    streamCaptureBtn.style.backgroundColor = "#dc3545";
+
+    // より詳細なエラーメッセージを表示
+    if (error.name === "NotFoundError") {
+      alert("カメラが見つかりません。接続を確認してください。");
+    } else if (error.name === "NotAllowedError") {
+      alert("カメラアクセスが許可されていません。ブラウザの設定を確認してください。");
+    } else if (error.name === "OverconstrainedError") {
+      alert("指定されたカメラ設定がサポートされていません。設定を変更してください。");
+    } else {
+      alert(`カメラエラー: ${error.message}`);
+    }
+  }
 });
 
 // ===== ここから詳細WebRTC統計ログ機能 (Answer側) =====
